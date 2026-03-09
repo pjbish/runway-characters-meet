@@ -102,6 +102,12 @@
 
   .row > .field { flex: 1; }
 
+  .hint {
+    font-size: 11px;
+    color: #52525b;
+    margin-top: 4px;
+  }
+
   button {
     width: 100%;
     padding: 12px;
@@ -134,11 +140,6 @@
 
   .btn-danger:hover:not(:disabled) {
     opacity: 0.9;
-  }
-
-  .btn-secondary {
-    background: var(--border);
-    color: var(--text);
   }
 
   .status-bar {
@@ -204,6 +205,20 @@
 <div class="container">
   <h1>Calliope Meet</h1>
   <p class="subtitle">Send a Runway avatar to any video meeting</p>
+
+  <!-- API Key Card -->
+  <div class="card">
+    <h2>Runway API</h2>
+    <div class="field">
+      <label for="runway-key">API Key</label>
+      <input type="password" id="runway-key" placeholder="Your Runway API key">
+      <div class="hint">Saved locally in your browser — never sent to our server except to proxy Runway calls</div>
+    </div>
+    <div class="field">
+      <label for="runway-base-url">Base URL</label>
+      <input type="text" id="runway-base-url" value="https://api.dev.runwayml.com">
+    </div>
+  </div>
 
   <!-- Config Card -->
   <div class="card" id="config-card">
@@ -274,6 +289,8 @@
 </div>
 
 <script>
+const runwayKeyInput = document.getElementById("runway-key");
+const runwayBaseUrlInput = document.getElementById("runway-base-url");
 const meetingUrlInput = document.getElementById("meeting-url");
 const avatarTypeSelect = document.getElementById("avatar-type");
 const presetField = document.getElementById("preset-field");
@@ -290,6 +307,25 @@ const logBox = document.getElementById("log-box");
 
 let currentSessionId = null;
 let pollInterval = null;
+
+// Persist settings in localStorage
+const STORED_KEYS = ["runway-key", "runway-base-url", "meeting-url", "bot-name"];
+for (const key of STORED_KEYS) {
+  const el = document.getElementById(key);
+  const saved = localStorage.getItem(`calliope-meet:${key}`);
+  if (saved && key !== "runway-base-url") el.value = saved;
+  else if (saved && key === "runway-base-url" && saved !== "") el.value = saved;
+  el.addEventListener("input", () => {
+    localStorage.setItem(`calliope-meet:${key}`, el.value);
+  });
+}
+
+function runwayHeaders() {
+  return {
+    "X-Runway-Key": runwayKeyInput.value.trim(),
+    "X-Runway-Base-URL": runwayBaseUrlInput.value.trim(),
+  };
+}
 
 avatarTypeSelect.addEventListener("change", () => {
   const isCustom = avatarTypeSelect.value === "custom";
@@ -332,6 +368,12 @@ function updateLogs(logs) {
 async function startSession() {
   startError.classList.add("hidden");
 
+  if (!runwayKeyInput.value.trim()) {
+    startError.textContent = "Please enter your Runway API key";
+    startError.classList.remove("hidden");
+    return;
+  }
+
   const meetingUrl = meetingUrlInput.value.trim();
   if (!meetingUrl) {
     startError.textContent = "Please enter a meeting URL";
@@ -353,7 +395,10 @@ async function startSession() {
   try {
     const res = await fetch("/api/start", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...runwayHeaders(),
+      },
       body: JSON.stringify({
         meetingUrl,
         avatarType,
@@ -413,7 +458,6 @@ async function stopSession() {
     // ignore
   }
 
-  // Let the poll pick up the final status
   setTimeout(() => {
     clearInterval(pollInterval);
     pollInterval = null;

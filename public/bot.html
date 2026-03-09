@@ -105,8 +105,9 @@ async function start() {
   // 2. Connect to the LiveKit room
   setStatus("Connecting to avatar...");
   const room = new Room({
-    adaptiveStream: true,
-    dynacast: true,
+    adaptiveStream: false,
+    dynacast: false,
+    videoCaptureDefaults: { resolution: { width: 1280, height: 720 } },
   });
 
   room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {

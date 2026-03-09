@@ -7,13 +7,17 @@ app.use(express.json());
 app.use(express.static("public"));
 
 const {
-  RUNWAY_API_KEY,
-  RUNWAY_BASE_URL = "https://api.dev.runwayml.com",
   RECALL_API_KEY,
   RECALL_REGION = "us-west-2",
-  PUBLIC_URL = "http://localhost:3000",
   PORT = "3000",
 } = process.env;
+
+// PUBLIC_URL: explicit env var > Railway auto-domain > localhost fallback
+const PUBLIC_URL =
+  process.env.PUBLIC_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`);
 
 const RECALL_BASE = `https://${RECALL_REGION}.recall.ai/api/v1`;
 
@@ -21,14 +25,19 @@ const RECALL_BASE = `https://${RECALL_REGION}.recall.ai/api/v1`;
 const sessions = new Map();
 
 // ---------------------------------------------------------------------------
-// Runway API helpers
+// Runway API helpers (per-user credentials)
 // ---------------------------------------------------------------------------
 
-async function runwayFetch(path, { method = "GET", body, bearerToken } = {}) {
-  const res = await fetch(`${RUNWAY_BASE_URL}${path}`, {
+async function runwayFetch(
+  baseUrl,
+  apiKey,
+  path,
+  { method = "GET", body, bearerToken } = {}
+) {
+  const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${bearerToken || RUNWAY_API_KEY}`,
+      Authorization: `Bearer ${bearerToken || apiKey}`,
       "X-Runway-Version": "2024-11-06",
       "Content-Type": "application/json",
     },
@@ -44,42 +53,8 @@ async function runwayFetch(path, { method = "GET", body, bearerToken } = {}) {
   return data;
 }
 
-async function createRunwaySession(avatar, maxDuration = 120) {
-  return runwayFetch("/v1/realtime_sessions", {
-    method: "POST",
-    body: { model: "gwm1_avatars", avatar, maxDuration },
-  });
-}
-
-async function pollRunwaySession(id) {
-  for (let i = 0; i < 90; i++) {
-    const s = await runwayFetch(`/v1/realtime_sessions/${id}`);
-    if (s.status === "READY") return s.sessionKey;
-    if (s.status === "FAILED" || s.status === "CANCELLED") {
-      throw new Error(`Session ${s.status}: ${s.failure || ""}`);
-    }
-    await sleep(2000);
-  }
-  throw new Error("Timed out waiting for session to be ready");
-}
-
-async function consumeRunwaySession(id, sessionKey) {
-  return runwayFetch(`/v1/realtime_sessions/${id}/consume`, {
-    method: "POST",
-    bearerToken: sessionKey,
-  });
-}
-
-async function cancelRunwaySession(id) {
-  try {
-    await runwayFetch(`/v1/realtime_sessions/${id}`, { method: "DELETE" });
-  } catch {
-    // best-effort
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Recall.ai API helpers
+// Recall.ai API helpers (shared server credential)
 // ---------------------------------------------------------------------------
 
 async function recallFetch(path, { method = "GET", body } = {}) {
@@ -113,6 +88,11 @@ async function createRecallBot(meetingUrl, botName, botPageUrl) {
           config: { url: botPageUrl },
         },
       },
+      variant: {
+        zoom: "web_4_core",
+        google_meet: "web_4_core",
+        microsoft_teams: "web_4_core",
+      },
     },
   });
 }
@@ -126,13 +106,27 @@ async function deleteRecallBot(botId) {
 }
 
 // ---------------------------------------------------------------------------
+// Middleware: extract per-user Runway credentials from headers
+// ---------------------------------------------------------------------------
+
+function getRunwayCreds(req) {
+  const apiKey = req.headers["x-runway-key"];
+  const baseUrl = (
+    req.headers["x-runway-base-url"] || "https://api.dev.runwayml.com"
+  ).replace(/\/+$/, "");
+  if (!apiKey) throw new Error("Runway API key is required");
+  return { apiKey, baseUrl };
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
-// List Runway avatars
-app.get("/api/avatars", async (_req, res) => {
+// List Runway avatars (uses per-user key)
+app.get("/api/avatars", async (req, res) => {
   try {
-    const data = await runwayFetch("/v1/avatars");
+    const { apiKey, baseUrl } = getRunwayCreds(req);
+    const data = await runwayFetch(baseUrl, apiKey, "/v1/avatars");
     const ready = data.data.filter((a) => a.status === "READY");
     res.json(ready);
   } catch (err) {
@@ -140,11 +134,19 @@ app.get("/api/avatars", async (_req, res) => {
   }
 });
 
-// Start a session: create Runway session + Recall bot (async, returns immediately)
+// Start a session (async, returns immediately)
 app.post("/api/start", (req, res) => {
+  let runway;
+  try {
+    runway = getRunwayCreds(req);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
   const { meetingUrl, avatarType, avatarId, botName, maxDuration } = req.body;
 
-  if (!meetingUrl) return res.status(400).json({ error: "meetingUrl required" });
+  if (!meetingUrl)
+    return res.status(400).json({ error: "meetingUrl required" });
   if (!avatarId) return res.status(400).json({ error: "avatarId required" });
 
   const avatar =
@@ -161,11 +163,11 @@ app.post("/api/start", (req, res) => {
     recallBotId: null,
     liveKit: null,
     meetingUrl,
+    runway,
     logs: [],
   };
   sessions.set(id, session);
 
-  // Run the async pipeline
   runSessionPipeline(session, avatar, meetingUrl, botName, maxDuration);
 
   res.json({ sessionId: id });
@@ -188,7 +190,8 @@ app.get("/api/sessions/:id", (req, res) => {
 app.get("/api/sessions/:id/creds", (req, res) => {
   const session = sessions.get(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
-  if (!session.liveKit) return res.status(425).json({ error: "Not ready yet" });
+  if (!session.liveKit)
+    return res.status(425).json({ error: "Not ready yet" });
   res.json(session.liveKit);
 });
 
@@ -205,7 +208,15 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
 // Session pipeline
 // ---------------------------------------------------------------------------
 
-async function runSessionPipeline(session, avatar, meetingUrl, botName, maxDuration) {
+async function runSessionPipeline(
+  session,
+  avatar,
+  meetingUrl,
+  botName,
+  maxDuration
+) {
+  const { apiKey, baseUrl } = session.runway;
+
   const log = (msg) => {
     const ts = new Date().toISOString().slice(11, 23);
     session.logs.push(`[${ts}] ${msg}`);
@@ -215,20 +226,44 @@ async function runSessionPipeline(session, avatar, meetingUrl, botName, maxDurat
   try {
     // 1. Create Runway session
     log("Creating Runway realtime session...");
-    const created = await createRunwaySession(avatar, maxDuration || 120);
+    const created = await runwayFetch(baseUrl, apiKey, "/v1/realtime_sessions", {
+      method: "POST",
+      body: { model: "gwm1_avatars", avatar, maxDuration: maxDuration || 120 },
+    });
     session.runwaySessionId = created.id;
     log(`Runway session created: ${created.id}`);
 
     // 2. Poll until ready
     session.status = "polling";
     log("Waiting for avatar to be ready...");
-    const sessionKey = await pollRunwaySession(created.id);
+    let sessionKey;
+    for (let i = 0; i < 90; i++) {
+      const s = await runwayFetch(
+        baseUrl,
+        apiKey,
+        `/v1/realtime_sessions/${created.id}`
+      );
+      if (s.status === "READY") {
+        sessionKey = s.sessionKey;
+        break;
+      }
+      if (s.status === "FAILED" || s.status === "CANCELLED") {
+        throw new Error(`Session ${s.status}: ${s.failure || ""}`);
+      }
+      await sleep(2000);
+    }
+    if (!sessionKey) throw new Error("Timed out waiting for session to be ready");
     log("Avatar is ready");
 
     // 3. Consume to get LiveKit creds
     session.status = "consuming";
     log("Getting LiveKit credentials...");
-    const creds = await consumeRunwaySession(created.id, sessionKey);
+    const creds = await runwayFetch(
+      baseUrl,
+      apiKey,
+      `/v1/realtime_sessions/${created.id}/consume`,
+      { method: "POST", bearerToken: sessionKey }
+    );
     session.liveKit = { url: creds.url, token: creds.token };
     log(`LiveKit room: ${creds.roomName}`);
 
@@ -246,11 +281,7 @@ async function runSessionPipeline(session, avatar, meetingUrl, botName, maxDurat
   } catch (err) {
     session.status = "failed";
     session.error = err.message;
-    const log2 = (msg) => {
-      const ts = new Date().toISOString().slice(11, 23);
-      session.logs.push(`[${ts}] ${msg}`);
-    };
-    log2(`Error: ${err.message}`);
+    log(`Error: ${err.message}`);
   }
 }
 
@@ -268,9 +299,18 @@ async function stopSession(session) {
     await deleteRecallBot(session.recallBotId);
   }
 
-  if (session.runwaySessionId) {
+  if (session.runwaySessionId && session.runway) {
     log("Cancelling Runway session...");
-    await cancelRunwaySession(session.runwaySessionId);
+    try {
+      await runwayFetch(
+        session.runway.baseUrl,
+        session.runway.apiKey,
+        `/v1/realtime_sessions/${session.runwaySessionId}`,
+        { method: "DELETE" }
+      );
+    } catch {
+      // best-effort
+    }
   }
 
   session.status = "ended";
