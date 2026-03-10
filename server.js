@@ -85,15 +85,22 @@ async function recallFetch(path, { method = "GET", body } = {}) {
 }
 
 async function createRecallBot(meetingUrl, botName, botPageUrl, sessionId) {
+  const displayName = botName || "Calliope Avatar";
   return recallFetch("/bot/", {
     method: "POST",
     body: {
       meeting_url: meetingUrl,
-      bot_name: botName || "Calliope Avatar",
+      bot_name: displayName,
       output_media: {
         camera: {
           kind: "webpage",
           config: { url: botPageUrl },
+        },
+      },
+      chat: {
+        on_bot_join: {
+          send_to: "everyone",
+          message: `Hello everyone, I'm ${displayName}`,
         },
       },
       variant: {
