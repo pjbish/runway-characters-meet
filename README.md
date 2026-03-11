@@ -4,6 +4,8 @@ Send a Runway avatar to any Zoom, Google Meet, or Teams meeting as a separate pa
 
 Uses [Recall.ai](https://www.recall.ai/) to join meetings and [Runway's Realtime Avatars API](https://docs.dev.runwayml.com/api/#tag/Realtime-Sessions) (GWM-1 Avatars) for the avatar.
 
+Demo: https://runway-characters-meet-production.up.railway.app/
+
 ## How It Works
 
 ```
