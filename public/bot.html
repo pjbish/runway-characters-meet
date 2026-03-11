@@ -102,6 +102,7 @@ async function fetchCreds(retries = 30) {
 // ---------------------------------------------------------------------------
 
 const participantFrames = new Map(); // participantId → { img, name }
+const avatarAudioElements = []; // track audio elements so we can mute/unmute
 
 function setupVideoRelay() {
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -113,6 +114,14 @@ function setupVideoRelay() {
   ws.onmessage = (event) => {
     try {
       const frame = JSON.parse(event.data);
+
+      // Handle control messages (mute/unmute)
+      if (frame.type === "control" && frame.action === "mute") {
+        console.log("[bot] Mute:", frame.muted);
+        avatarAudioElements.forEach((el) => { el.muted = frame.muted; });
+        return;
+      }
+
       if (!frame.buffer) return;
 
       const img = new Image();
@@ -208,6 +217,7 @@ async function start() {
       const audioEl = track.attach();
       audioEl.volume = 1.0;
       document.body.appendChild(audioEl);
+      avatarAudioElements.push(audioEl);
     }
   });
 
@@ -216,9 +226,19 @@ async function start() {
   });
 
   room.on(RoomEvent.Disconnected, () => {
-    setStatus("Disconnected");
+    setStatus("Session ended — leaving meeting...");
     statusOverlay.classList.remove("hidden");
     videoEl.style.display = "none";
+    // Runway session expired — tell the server to pull the bot out of the meeting
+    console.log("[bot] LiveKit disconnected, requesting bot leave...");
+    fetch(`/api/sessions/${sessionId}/stop`, { method: "POST" })
+      .then((r) => console.log("[bot] Stop response:", r.status))
+      .catch((e) => {
+        console.error("[bot] Stop request failed, retrying...", e);
+        setTimeout(() => {
+          fetch(`/api/sessions/${sessionId}/stop`, { method: "POST" }).catch(() => {});
+        }, 3000);
+      });
   });
 
   await room.connect(creds.url, creds.token);

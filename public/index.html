@@ -133,6 +133,15 @@
     background: var(--accent-hover);
   }
 
+  .btn-secondary {
+    background: #555;
+    color: white;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
   .btn-danger {
     background: var(--red);
     color: white;
@@ -140,6 +149,11 @@
 
   .btn-danger:hover:not(:disabled) {
     opacity: 0.9;
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
   }
 
   .status-bar {
@@ -280,10 +294,17 @@
 
     <div class="log-box" id="log-box"></div>
 
-    <div class="field" style="margin-top: 16px">
-      <button class="btn-danger hidden" id="stop-btn" onclick="stopSession()">
-        End Session
-      </button>
+    <div class="row" style="margin-top: 16px">
+      <div class="field">
+        <button class="btn-secondary hidden" id="mute-btn" onclick="toggleMute()">
+          Mute Avatar
+        </button>
+      </div>
+      <div class="field">
+        <button class="btn-danger hidden" id="stop-btn" onclick="stopSession()">
+          End Session
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -301,12 +322,14 @@ const botNameInput = document.getElementById("bot-name");
 const startBtn = document.getElementById("start-btn");
 const startError = document.getElementById("start-error");
 const stopBtn = document.getElementById("stop-btn");
+const muteBtn = document.getElementById("mute-btn");
 const statusDot = document.getElementById("status-dot");
 const statusLabel = document.getElementById("status-label");
 const logBox = document.getElementById("log-box");
 
 let currentSessionId = null;
 let pollInterval = null;
+let isMuted = false;
 
 // Persist settings in localStorage
 const STORED_KEYS = ["runway-key", "runway-base-url", "meeting-url", "bot-name"];
@@ -415,6 +438,7 @@ async function startSession() {
     logBox.innerHTML = "";
 
     stopBtn.classList.remove("hidden");
+    muteBtn.classList.remove("hidden");
     setStatus("creating");
 
     pollInterval = setInterval(pollSession, 1500);
@@ -446,6 +470,21 @@ async function pollSession() {
   }
 }
 
+async function toggleMute() {
+  if (!currentSessionId) return;
+  isMuted = !isMuted;
+  muteBtn.textContent = isMuted ? "Unmute Avatar" : "Mute Avatar";
+  try {
+    await fetch(`/api/sessions/${currentSessionId}/mute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted: isMuted }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
 async function stopSession() {
   if (!currentSessionId) return;
 
@@ -472,6 +511,9 @@ function resetControls() {
   stopBtn.classList.add("hidden");
   stopBtn.disabled = false;
   stopBtn.textContent = "End Session";
+  muteBtn.classList.add("hidden");
+  muteBtn.textContent = "Mute Avatar";
+  isMuted = false;
   currentSessionId = null;
 }
 </script>

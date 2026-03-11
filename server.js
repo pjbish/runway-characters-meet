@@ -125,9 +125,12 @@ async function createRecallBot(meetingUrl, botName, botPageUrl, sessionId) {
 
 async function deleteRecallBot(botId) {
   try {
-    await recallFetch(`/bot/${botId}/leave_call/`, { method: "POST" });
-  } catch {
-    // best-effort
+    console.log(`[recall] Sending leave_call for bot ${botId}`);
+    const result = await recallFetch(`/bot/${botId}/leave_call/`, { method: "POST" });
+    console.log(`[recall] Bot ${botId} left the call`);
+    return result;
+  } catch (err) {
+    console.error(`[recall] Failed to remove bot ${botId}:`, err.message);
   }
 }
 
@@ -215,6 +218,25 @@ app.get("/api/sessions/:id/creds", (req, res) => {
   if (!session.liveKit)
     return res.status(425).json({ error: "Not ready yet" });
   res.json(session.liveKit);
+});
+
+app.post("/api/sessions/:id/mute", (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const { muted } = req.body;
+  session.muted = !!muted;
+
+  // Send control message to the bot page via WebSocket relay
+  const clients = videoRelayClients.get(req.params.id);
+  if (clients) {
+    const msg = JSON.stringify({ type: "control", action: "mute", muted: session.muted });
+    for (const client of clients) {
+      if (client.readyState === 1) client.send(msg);
+    }
+  }
+
+  res.json({ muted: session.muted });
 });
 
 app.post("/api/sessions/:id/stop", async (req, res) => {
@@ -340,7 +362,7 @@ async function runSessionPipeline(
         body: {
           model: "gwm1_avatars",
           avatar,
-          maxDuration: maxDuration || 120,
+          maxDuration: maxDuration || 300,
         },
       }
     );
