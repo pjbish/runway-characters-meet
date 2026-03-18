@@ -244,7 +244,9 @@ async function start() {
   await room.connect(creds.url, creds.token);
   setStatus("Connected — waiting for avatar video...");
 
-  // 3. Capture meeting audio and publish to LiveKit
+  // 3. Capture meeting audio and publish to LiveKit.
+  //    Mix in a brief near-silent activation tone so the Runway avatar
+  //    starts publishing immediately without waiting for human speech.
   try {
     const meetingStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -253,13 +255,45 @@ async function start() {
         autoGainControl: false,
       },
     });
-    const audioTrack = meetingStream.getAudioTracks()[0];
-    await room.localParticipant.publishTrack(audioTrack, {
-      name: "meeting-audio",
-    });
-    console.log("[bot] Meeting audio published to LiveKit");
+
+    const audioCtx = new AudioContext();
+    const dest = audioCtx.createMediaStreamDestination();
+
+    // Route real meeting audio through the mixer
+    const meetingSource = audioCtx.createMediaStreamSource(meetingStream);
+    meetingSource.connect(dest);
+
+    // Brief near-silent tone (500 ms) to activate the avatar on connect
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.5);
+
+    const mixedTrack = dest.stream.getAudioTracks()[0];
+    await room.localParticipant.publishTrack(mixedTrack, { name: "meeting-audio" });
+    console.log("[bot] Meeting audio (with activation tone) published to LiveKit");
   } catch (err) {
     console.warn("[bot] Could not capture meeting audio:", err.message);
+    // Fallback: publish activation tone alone so avatar still activates
+    try {
+      const audioCtx = new AudioContext();
+      const dest = audioCtx.createMediaStreamDestination();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.5);
+      const track = dest.stream.getAudioTracks()[0];
+      await room.localParticipant.publishTrack(track, { name: "meeting-audio" });
+      console.log("[bot] Activation-only audio published (no meeting mic available)");
+    } catch (e) {
+      console.warn("[bot] Activation tone also failed:", e.message);
+    }
   }
 
   // 4. Publish meeting video canvas as a video track to LiveKit

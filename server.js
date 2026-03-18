@@ -12,6 +12,8 @@ const {
   RECALL_API_KEY,
   RECALL_REGION = "us-west-2",
   PORT = "3000",
+  RUNWAY_API_KEY,
+  RUNWAY_BASE_URL = "https://api.dev.runwayml.com",
 } = process.env;
 
 const PUBLIC_URL =
@@ -139,17 +141,21 @@ async function deleteRecallBot(botId) {
 // ---------------------------------------------------------------------------
 
 function getRunwayCreds(req) {
-  const apiKey = req.headers["x-runway-key"];
+  const apiKey = RUNWAY_API_KEY || req.headers["x-runway-key"];
   const baseUrl = (
-    req.headers["x-runway-base-url"] || "https://api.dev.runwayml.com"
+    RUNWAY_BASE_URL || req.headers["x-runway-base-url"] || "https://api.dev.runwayml.com"
   ).replace(/\/+$/, "");
-  if (!apiKey) throw new Error("Runway API key is required");
+  if (!apiKey) throw new Error("Runway API key is required (set RUNWAY_API_KEY env var or pass X-Runway-Key header)");
   return { apiKey, baseUrl };
 }
 
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
+
+app.get("/api/config", (req, res) => {
+  res.json({ hasRunwayKey: !!RUNWAY_API_KEY });
+});
 
 app.get("/api/avatars", async (req, res) => {
   try {

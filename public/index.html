@@ -220,8 +220,8 @@
   <h1>Calliope Meet</h1>
   <p class="subtitle">Send a Runway avatar to any video meeting</p>
 
-  <!-- API Key Card -->
-  <div class="card">
+  <!-- API Key Card (hidden when RUNWAY_API_KEY is set server-side) -->
+  <div class="card" id="runway-card">
     <h2>Runway API</h2>
     <div class="field">
       <label for="runway-key">API Key</label>
@@ -312,6 +312,7 @@
 <script>
 const runwayKeyInput = document.getElementById("runway-key");
 const runwayBaseUrlInput = document.getElementById("runway-base-url");
+const runwayCard = document.getElementById("runway-card");
 const meetingUrlInput = document.getElementById("meeting-url");
 const avatarTypeSelect = document.getElementById("avatar-type");
 const presetField = document.getElementById("preset-field");
@@ -330,6 +331,15 @@ const logBox = document.getElementById("log-box");
 let currentSessionId = null;
 let pollInterval = null;
 let isMuted = false;
+let serverHasRunwayKey = false;
+
+// Check if the server has a Runway API key configured
+fetch("/api/config").then(r => r.json()).then(cfg => {
+  serverHasRunwayKey = cfg.hasRunwayKey;
+  if (serverHasRunwayKey) {
+    runwayCard.classList.add("hidden");
+  }
+}).catch(() => {});
 
 // Persist settings in localStorage
 const STORED_KEYS = ["runway-key", "runway-base-url", "meeting-url", "bot-name"];
@@ -344,6 +354,7 @@ for (const key of STORED_KEYS) {
 }
 
 function runwayHeaders() {
+  if (serverHasRunwayKey) return {};
   return {
     "X-Runway-Key": runwayKeyInput.value.trim(),
     "X-Runway-Base-URL": runwayBaseUrlInput.value.trim(),
@@ -391,7 +402,7 @@ function updateLogs(logs) {
 async function startSession() {
   startError.classList.add("hidden");
 
-  if (!runwayKeyInput.value.trim()) {
+  if (!serverHasRunwayKey && !runwayKeyInput.value.trim()) {
     startError.textContent = "Please enter your Runway API key";
     startError.classList.remove("hidden");
     return;
