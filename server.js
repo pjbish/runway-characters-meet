@@ -117,6 +117,9 @@ async function createRecallBot(meetingUrl, botName, botPageUrl, sessionId) {
           audio: true,
         },
         transcript: {
+          diarization: {
+            use_separate_streams_when_available: true,
+          },
           provider: {
             recallai_streaming: {
               mode: "prioritize_low_latency",
