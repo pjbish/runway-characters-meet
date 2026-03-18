@@ -120,6 +120,7 @@ async function createRecallBot(meetingUrl, botName, botPageUrl, sessionId) {
           provider: {
             recallai_streaming: {
               mode: "prioritize_low_latency",
+              language_code: "en",
             },
           },
         },
