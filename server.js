@@ -113,6 +113,16 @@ async function createRecallBot(meetingUrl, botName, botPageUrl, sessionId) {
       recording_config: {
         video_mixed_layout: "gallery_view_v2",
         video_separate_png: {},
+        include_bot_in_recording: {
+          audio: true,
+        },
+        transcript: {
+          provider: {
+            recallai_streaming: {
+              mode: "prioritize_low_latency",
+            },
+          },
+        },
         realtime_endpoints: [
           {
             type: "websocket",
